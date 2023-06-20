@@ -2,6 +2,7 @@
 
 library(tidyverse)
 library(readxl)
+library(broom)
 
 #########################
 ## Reading in the Data ##
@@ -113,7 +114,106 @@ Combined <- PARF %>%
   relocate(all_of(Comorbidities), .after = ethnic) %>% 
   relocate(all_of(Severity), .after = prism) %>% 
   relocate(all_of(Outcomes), .after = mods) %>% 
-  mutate(across(contains("_rs"), ~fct(.) %>% fct_infreq()))
+  mutate(across(contains("_rs"), ~fct(.) %>% fct_infreq())) %>% 
+  mutate(PG = if_else(PCSK9_LOF == FALSE | is.na(PCSK9_LOF), "Other", "LOF"),
+         female = if_else(gender == "Female", TRUE, FALSE)) %>% 
+  mutate(across(PG, ~fct(., levels = c("Other", "LOF")))) %>% 
+  relocate(PG, .after = HMGCR_LOF) %>% 
+  relocate(female, .after = gender)
+  
 
 SNPs <- colnames(select(Combined, contains("_rs")))
 Cytokines <- colnames(select(Combined, matches("IL_|thrbm")))
+
+
+#####################################
+## Building the demographic tables ##
+#####################################
+
+DemoVars1 <- c("female", Comorbidities, Severity, "dead90") %>% 
+  .[!. %in% c("highestOI", "highestOI_day")]
+DemoTab1 <- Combined %>% 
+  group_by(PG) %>% 
+  summarize(across(all_of(DemoVars1), list(
+    N = ~ n(),
+    Count = ~sum(. == TRUE, na.rm = TRUE)),
+    .names = "{col}.{fn}")) %>%
+  pivot_longer(cols = 2:ncol(.), names_to = "Vars", values_to = "Vals") %>% 
+  pivot_wider(names_from = PG, values_from = Vals) %>% 
+  mutate(across(where(is.numeric), ~round(., 1))) %>% 
+  mutate(across("Vars", ~replace(., Vars == "female.N", "N") %>% str_replace("\\.Count", ""))) %>% 
+  filter(!str_detect(Vars, "\\.N"))
+
+DemoProp <- NULL
+for (i in 2:nrow(DemoTab1)) {
+  tmp <- prop.test(as.numeric(DemoTab1[i,2:3]), as.numeric(DemoTab1[1,2:3]))
+  
+  Props <- tmp$estimate %>% 
+    as_tibble() %>% 
+    t() %>% 
+    `colnames<-`(colnames(DemoTab1[,2:3]))
+  DemoProp <- tibble(Vars = as.character(DemoTab1[i,1]),
+                     p.value = tmp$p.value) %>% 
+    bind_cols(Props) %>% 
+    bind_rows(DemoProp, .) %>% 
+    relocate(p.value, .after = last_col())
+}
+
+DemoProp_f <- DemoProp %>% 
+  mutate(across(c("Other", "LOF"), ~round(.*100, 0))) %>% 
+  mutate(across(p.value, ~round(., 2)))
+
+Partial <- left_join(DemoTab1, DemoProp_f, by = "Vars") %>% 
+  mutate(Other = if_else(is.na(p.value), paste0(Other.x, " (", round(Other.x/nrow(Combined)*100, 0), ")"), paste0(Other.x, " (", Other.y, ")")),
+         LOF = if_else(is.na(p.value), paste0(LOF.x, " (", round(LOF.x/nrow(Combined)*100, 0), ")"), paste0(LOF.x, " (", LOF.y, ")"))) %>% 
+  dplyr::select(Vars, Other, LOF, p.value) %>% 
+  mutate(across(Vars, ~if_else(. == "N", paste0("n = ", nrow(Combined), ", n (%)"), paste0(., ", n (%)"))))
+
+DemoVars2 <- c("age", "prism", "highestOI", "durmv28", "piculos", "hosplos")
+DemoTab2 <- Combined %>% 
+  group_by(PG) %>% 
+  summarise(across(all_of(DemoVars2), list(
+    Median = ~median(., na.rm = TRUE),
+    q25 = ~quantile(., 0.25, na.rm = TRUE),
+    q75 = ~quantile(., 0.75, na.rm = TRUE)),
+    .names = "{col}.{fn}")) %>% 
+  pivot_longer(cols = 2:ncol(.), names_to = "Vars", values_to = "Vals") %>% 
+  pivot_wider(names_from = PG, values_from = Vals) %>% 
+  mutate(across(where(is.numeric), ~round(., 1))) %>% 
+  separate(col = Vars, sep = "\\.", into = c("Vars", "Term"))
+
+SumStats <- NULL
+for (i in DemoVars2) {
+  tmp <- Combined %>% 
+    group_by(PG) %>% 
+    summarise(Mean = mean(get(i), na.rm = TRUE),
+              SD = sd(get(i), na.rm = TRUE),
+              Median = median(get(i), na.rm = TRUE),
+              q25 = quantile(get(i), probs = 0.25, na.rm = TRUE),
+              q75 = round(quantile(get(i), probs = 0.75, na.rm = TRUE), 0),
+              Count = sum(!is.na(get(i))),
+              SWilk = shapiro.test(get(i))$p.value)
+  
+  mod <- wilcox.test(get(i) ~ PG, data = Combined) %>% 
+    tidy()
+  
+  SumStats <- tibble(Vars = rep(i, 2),
+                     tmp,
+                     p.value = rep(round(mod[1,2], 2), 2)) %>% 
+    bind_rows(SumStats, .)
+}
+
+SumStats_f <- SumStats %>% 
+  mutate(across(c("Median", "q25", "q75"), ~if_else(Vars %in% c("age", "highestOI", "durmv28", "piculos"), round(., 1), .))) %>% 
+  mutate(Final = paste0(Median, " (", q25, ", ", q75, ")")) %>% 
+  pivot_wider(id_cols = c("Vars", "p.value"), names_from = "PG", values_from = "Final") %>% 
+  relocate(p.value, .after = LOF) %>% 
+  unnest(cols = p.value) %>% 
+  mutate(across(Vars, ~paste0(., ", median (IQR)")))
+
+
+Full <- bind_rows(Partial, SumStats_f)
+
+write_csv(Full, "DemographicTable.csv")
+
+rm(tmp, mod, Props, Partial, SumStats, SumStats_f, list = ls(pattern = "Demo"))
