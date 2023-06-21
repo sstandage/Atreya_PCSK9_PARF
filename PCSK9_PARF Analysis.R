@@ -105,7 +105,7 @@ Geno <- read_excel("BALI Genotyping results_Atreya_Dahmer.xlsx") %>%
 
 Comorbidities <- colnames(select(PARF, premature:chromabn))
 Severity <- colnames(select(PARF, d1ARDS:ecmo, highestOI:mods))
-Outcomes <- colnames(select(PARF, dead90, primdeath, secdeath, durmv28, piculos, hosplos))
+Outcomes <- colnames(select(PARF, dead90, durmv28, piculos, hosplos))
 
 Combined <- PARF %>% 
   left_join(Geno, by = "baliid") %>% 
@@ -130,8 +130,7 @@ Cytokines <- colnames(select(Combined, matches("IL_|thrbm")))
 ## Building the demographic tables ##
 #####################################
 
-DemoVars1 <- c("female", Comorbidities, Severity, "dead90") %>% 
-  .[!. %in% c("highestOI", "highestOI_day")]
+DemoVars1 <- c("female", Comorbidities)
 DemoTab1 <- Combined %>% 
   group_by(PG) %>% 
   summarize(across(all_of(DemoVars1), list(
@@ -169,7 +168,7 @@ Partial <- left_join(DemoTab1, DemoProp_f, by = "Vars") %>%
   dplyr::select(Vars, Other, LOF, p.value) %>% 
   mutate(across(Vars, ~if_else(. == "N", paste0("n = ", nrow(Combined), ", n (%)"), paste0(., ", n (%)"))))
 
-DemoVars2 <- c("age", "prism", "highestOI", "durmv28", "piculos", "hosplos")
+DemoVars2 <- c("age", "prism")
 DemoTab2 <- Combined %>% 
   group_by(PG) %>% 
   summarise(across(all_of(DemoVars2), list(
@@ -217,3 +216,373 @@ Full <- bind_rows(Partial, SumStats_f)
 write_csv(Full, "DemographicTable.csv")
 
 rm(tmp, mod, Props, Partial, SumStats, SumStats_f, list = ls(pattern = "Demo"))
+
+
+##################################
+## Exploratory Outcome Analysis ##
+##################################
+
+Genotypes <- colnames(select(Combined, LDLR_rs688:PG))
+Outcomes <- "dead90"
+
+UniReg <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i))
+    tmp <- glm(tmpform, data = Combined, family = "binomial")
+    res <- tidy(tmp) %>% 
+      mutate(OR = exp(estimate)) %>% 
+      bind_cols(exp(confint(tmp))) #%>% 
+    #mutate(across(5:8, ~round(., 3)))
+    UniReg <- tibble(Var1 = j,
+                     Var2 = i,
+                     nObs = nobs(tmp),
+                     res[2,]) %>% 
+      select(-term) %>% 
+      bind_rows(UniReg, .)
+  }
+}
+
+UniReg_NoLDLR <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i))
+    tmp <- glm(tmpform, data = filter(Combined, LDLR_homo == FALSE), family = "binomial")
+    res <- tidy(tmp) %>% 
+      mutate(OR = exp(estimate)) %>% 
+      bind_cols(exp(confint(tmp))) #%>% 
+    #mutate(across(5:8, ~round(., 3)))
+    UniReg_NoLDLR <- tibble(Var1 = j,
+                     Var2 = i,
+                     nObs = nobs(tmp),
+                     res[2,]) %>% 
+      select(-term) %>% 
+      bind_rows(UniReg_NoLDLR, .)
+  }
+}
+
+# Looking at other outcome variables (the continuous).
+
+Outcomes <- c("durmv28", "piculos", "hosplos")
+
+UniRegLin <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i))
+    tmp <- lm(tmpform, data = Combined)
+    res <- tidy(tmp) %>% 
+    mutate(across(2:5, ~round(., 3)))
+    UniRegLin <- tibble(Var1 = j,
+                     Var2 = i,
+                     nObs = nobs(tmp),
+                     res) %>% 
+      bind_rows(UniRegLin, .)
+  }
+}
+
+UniRegLin_NoLDLR <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i))
+    tmp <- lm(tmpform, data = filter(Combined, LDLR_homo == FALSE))
+    res <- tidy(tmp) %>% 
+      mutate(across(2:5, ~round(., 3)))
+    UniRegLin_NoLDLR <- tibble(Var1 = j,
+                        Var2 = i,
+                        nObs = nobs(tmp),
+                        res) %>% 
+      bind_rows(UniRegLin_NoLDLR, .)
+  }
+}
+
+# Controlling for prism score.
+
+Outcomes <- "dead90"
+
+MultiReg_prism <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + prism"))
+    tmp <- glm(tmpform, data = Combined, family = "binomial")
+    res <- tidy(tmp) %>% 
+      mutate(OR = exp(estimate)) %>% 
+      bind_cols(exp(confint(tmp))) #%>% 
+    #mutate(across(5:8, ~round(., 3)))
+    MultiReg_prism <- tibble(Var1 = j,
+                     Var2 = i,
+                     nObs = nobs(tmp),
+                     res[2,]) %>% 
+      select(-term) %>% 
+      bind_rows(MultiReg_prism, .)
+  }
+}
+
+MultiReg_NoLDLR_prism <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + prism"))
+    tmp <- glm(tmpform, data = filter(Combined, LDLR_homo == FALSE), family = "binomial")
+    res <- tidy(tmp) %>% 
+      mutate(OR = exp(estimate)) %>% 
+      bind_cols(exp(confint(tmp))) #%>% 
+    #mutate(across(5:8, ~round(., 3)))
+    MultiReg_NoLDLR_prism <- tibble(Var1 = j,
+                            Var2 = i,
+                            nObs = nobs(tmp),
+                            res[2,]) %>% 
+      select(-term) %>% 
+      bind_rows(MultiReg_NoLDLR_prism, .)
+  }
+}
+
+Outcomes <- c("durmv28", "piculos", "hosplos")
+
+MultiRegLin_prism <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + prism"))
+    tmp <- lm(tmpform, data = Combined)
+    res <- tidy(tmp) %>% 
+      mutate(across(2:5, ~round(., 3)))
+    MultiRegLin_prism <- tibble(Var1 = j,
+                        Var2 = i,
+                        nObs = nobs(tmp),
+                        res) %>% 
+      bind_rows(MultiRegLin_prism, .)
+  }
+}
+
+MultiRegLin_NoLDLR_prism <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + prism"))
+    tmp <- lm(tmpform, data = filter(Combined, LDLR_homo == FALSE))
+    res <- tidy(tmp) %>% 
+      mutate(across(2:5, ~round(., 3)))
+    MultiRegLin_NoLDLR_prism <- tibble(Var1 = j,
+                               Var2 = i,
+                               nObs = nobs(tmp),
+                               res) %>% 
+      bind_rows(MultiRegLin_NoLDLR_prism, .)
+  }
+}
+
+# Controlling for age.
+
+Outcomes <- "dead90"
+
+MultiReg_age <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + age"))
+    tmp <- glm(tmpform, data = Combined, family = "binomial")
+    res <- tidy(tmp) %>% 
+      mutate(OR = exp(estimate)) %>% 
+      bind_cols(exp(confint(tmp))) #%>% 
+    #mutate(across(5:8, ~round(., 3)))
+    MultiReg_age <- tibble(Var1 = j,
+                             Var2 = i,
+                             nObs = nobs(tmp),
+                             res[2,]) %>% 
+      select(-term) %>% 
+      bind_rows(MultiReg_age, .)
+  }
+}
+
+MultiReg_NoLDLR_age <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + age"))
+    tmp <- glm(tmpform, data = filter(Combined, LDLR_homo == FALSE), family = "binomial")
+    res <- tidy(tmp) %>% 
+      mutate(OR = exp(estimate)) %>% 
+      bind_cols(exp(confint(tmp))) #%>% 
+    #mutate(across(5:8, ~round(., 3)))
+    MultiReg_NoLDLR_age <- tibble(Var1 = j,
+                                    Var2 = i,
+                                    nObs = nobs(tmp),
+                                    res[2,]) %>% 
+      select(-term) %>% 
+      bind_rows(MultiReg_NoLDLR_age, .)
+  }
+}
+
+Outcomes <- c("durmv28", "piculos", "hosplos")
+
+MultiRegLin_age <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + age"))
+    tmp <- lm(tmpform, data = Combined)
+    res <- tidy(tmp) %>% 
+      mutate(across(2:5, ~round(., 3)))
+    MultiRegLin_age <- tibble(Var1 = j,
+                                Var2 = i,
+                                nObs = nobs(tmp),
+                                res) %>% 
+      bind_rows(MultiRegLin_age, .)
+  }
+}
+
+MultiRegLin_NoLDLR_age <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + age"))
+    tmp <- lm(tmpform, data = filter(Combined, LDLR_homo == FALSE))
+    res <- tidy(tmp) %>% 
+      mutate(across(2:5, ~round(., 3)))
+    MultiRegLin_NoLDLR_age <- tibble(Var1 = j,
+                                       Var2 = i,
+                                       nObs = nobs(tmp),
+                                       res) %>% 
+      bind_rows(MultiRegLin_NoLDLR_age, .)
+  }
+}
+
+# Controlling for gender.
+
+Outcomes <- "dead90"
+
+MultiReg_gender <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + gender"))
+    tmp <- glm(tmpform, data = Combined, family = "binomial")
+    res <- tidy(tmp) %>% 
+      mutate(OR = exp(estimate)) %>% 
+      bind_cols(exp(confint(tmp))) #%>% 
+    #mutate(across(5:8, ~round(., 3)))
+    MultiReg_gender <- tibble(Var1 = j,
+                           Var2 = i,
+                           nObs = nobs(tmp),
+                           res[2,]) %>% 
+      select(-term) %>% 
+      bind_rows(MultiReg_gender, .)
+  }
+}
+
+MultiReg_NoLDLR_gender <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + gender"))
+    tmp <- glm(tmpform, data = filter(Combined, LDLR_homo == FALSE), family = "binomial")
+    res <- tidy(tmp) %>% 
+      mutate(OR = exp(estimate)) %>% 
+      bind_cols(exp(confint(tmp))) #%>% 
+    #mutate(across(5:8, ~round(., 3)))
+    MultiReg_NoLDLR_gender <- tibble(Var1 = j,
+                                  Var2 = i,
+                                  nObs = nobs(tmp),
+                                  res[2,]) %>% 
+      select(-term) %>% 
+      bind_rows(MultiReg_NoLDLR_gender, .)
+  }
+}
+
+Outcomes <- c("durmv28", "piculos", "hosplos")
+
+MultiRegLin_gender <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + gender"))
+    tmp <- lm(tmpform, data = Combined)
+    res <- tidy(tmp) %>% 
+      mutate(across(2:5, ~round(., 3)))
+    MultiRegLin_gender <- tibble(Var1 = j,
+                              Var2 = i,
+                              nObs = nobs(tmp),
+                              res) %>% 
+      bind_rows(MultiRegLin_gender, .)
+  }
+}
+
+MultiRegLin_NoLDLR_gender <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + gender"))
+    tmp <- lm(tmpform, data = filter(Combined, LDLR_homo == FALSE))
+    res <- tidy(tmp) %>% 
+      mutate(across(2:5, ~round(., 3)))
+    MultiRegLin_NoLDLR_gender <- tibble(Var1 = j,
+                                     Var2 = i,
+                                     nObs = nobs(tmp),
+                                     res) %>% 
+      bind_rows(MultiRegLin_NoLDLR_gender, .)
+  }
+}
+
+# Controlling for all 3 together!
+
+Outcomes <- "dead90"
+
+MultiReg_all <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + prism + age + gender"))
+    tmp <- glm(tmpform, data = Combined, family = "binomial")
+    res <- tidy(tmp) %>% 
+      mutate(OR = exp(estimate)) %>% 
+      bind_cols(exp(confint(tmp))) #%>% 
+    #mutate(across(5:8, ~round(., 3)))
+    MultiReg_all <- tibble(Var1 = j,
+                              Var2 = i,
+                              nObs = nobs(tmp),
+                              res[2,]) %>% 
+      select(-term) %>% 
+      bind_rows(MultiReg_all, .)
+  }
+}
+
+MultiReg_NoLDLR_all <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + prism + age + gender"))
+    tmp <- glm(tmpform, data = filter(Combined, LDLR_homo == FALSE), family = "binomial")
+    res <- tidy(tmp) %>% 
+      mutate(OR = exp(estimate)) %>% 
+      bind_cols(exp(confint(tmp))) #%>% 
+    #mutate(across(5:8, ~round(., 3)))
+    MultiReg_NoLDLR_all <- tibble(Var1 = j,
+                                     Var2 = i,
+                                     nObs = nobs(tmp),
+                                     res[2,]) %>% 
+      select(-term) %>% 
+      bind_rows(MultiReg_NoLDLR_all, .)
+  }
+}
+
+Outcomes <- c("durmv28", "piculos", "hosplos")
+
+MultiRegLin_all <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + prism + age + gender"))
+    tmp <- lm(tmpform, data = Combined)
+    res <- tidy(tmp) %>% 
+      mutate(across(2:5, ~round(., 3)))
+    MultiRegLin_all <- tibble(Var1 = j,
+                                 Var2 = i,
+                                 nObs = nobs(tmp),
+                                 res) %>% 
+      bind_rows(MultiRegLin_all, .)
+  }
+}
+
+MultiRegLin_NoLDLR_all <- NULL
+for (i in Genotypes) {
+  for (j in Outcomes) {
+    tmpform <- as.formula(paste0(j, " ~ ", i, " + prism + age + gender"))
+    tmp <- lm(tmpform, data = filter(Combined, LDLR_homo == FALSE))
+    res <- tidy(tmp) %>% 
+      mutate(across(2:5, ~round(., 3)))
+    MultiRegLin_NoLDLR_all <- tibble(Var1 = j,
+                                        Var2 = i,
+                                        nObs = nobs(tmp),
+                                        res) %>% 
+      bind_rows(MultiRegLin_NoLDLR_all, .)
+  }
+}
+
+for (i in ls(pattern = "Uni|Multi")) {
+  write_csv(get(i), paste0("./RegressionOutput/", i, ".csv"))
+}
