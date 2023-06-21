@@ -63,6 +63,7 @@ PARF <- read_excel("BALI Clinical data_Atreya_Dahmer.xlsx") %>%
          chromabn = if_else(chromabn_c == 1, TRUE, FALSE),
          dead90 = if_else(death_c == 1, TRUE, FALSE)) %>% 
   mutate(across(c("d1ARDS", "ARDS", "cvfail", "dialysis", "ecmo"), ~if_else(. == 1, TRUE, FALSE))) %>% 
+  mutate(across(mods, ~if_else(. > 0, TRUE, FALSE))) %>% 
   select(!contains("_c"), -matches("thrbm|IL_8|IL_1RA")) %>% 
   rename_with(.cols = everything(), ~str_replace(., "_03", ""))
 
@@ -104,7 +105,7 @@ Geno <- read_excel("BALI Genotyping results_Atreya_Dahmer.xlsx") %>%
                                               .default = PCSK9_rs11583680)))
 
 Comorbidities <- colnames(select(PARF, premature:chromabn))
-Severity <- colnames(select(PARF, d1ARDS:ecmo, highestOI:mods))
+Severity <- colnames(select(PARF, d1ARDS:ecmo, highestOI, mods))
 Outcomes <- colnames(select(PARF, dead90, durmv28, piculos, hosplos))
 
 Combined <- PARF %>% 
@@ -223,11 +224,15 @@ rm(tmp, mod, Props, Partial, SumStats, SumStats_f, list = ls(pattern = "Demo"))
 ##################################
 
 Genotypes <- colnames(select(Combined, LDLR_rs688:PG))
-Outcomes <- "dead90"
+OutcomesLog <- c(Severity, Outcomes) %>% 
+  .[! . %in% c("highestOI", "durmv28", "piculos", "hosplos")]
+
+OutcomesLin <- c(Severity, Outcomes) %>% 
+  .[. %in% c("highestOI", "durmv28", "piculos", "hosplos")]
 
 UniReg <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLog) {
     tmpform <- as.formula(paste0(j, " ~ ", i))
     tmp <- glm(tmpform, data = Combined, family = "binomial")
     res <- tidy(tmp) %>% 
@@ -245,7 +250,7 @@ for (i in Genotypes) {
 
 UniReg_NoLDLR <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLog) {
     tmpform <- as.formula(paste0(j, " ~ ", i))
     tmp <- glm(tmpform, data = filter(Combined, LDLR_homo == FALSE), family = "binomial")
     res <- tidy(tmp) %>% 
@@ -263,11 +268,9 @@ for (i in Genotypes) {
 
 # Looking at other outcome variables (the continuous).
 
-Outcomes <- c("durmv28", "piculos", "hosplos")
-
 UniRegLin <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLin) {
     tmpform <- as.formula(paste0(j, " ~ ", i))
     tmp <- lm(tmpform, data = Combined)
     res <- tidy(tmp) %>% 
@@ -282,7 +285,7 @@ for (i in Genotypes) {
 
 UniRegLin_NoLDLR <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLin) {
     tmpform <- as.formula(paste0(j, " ~ ", i))
     tmp <- lm(tmpform, data = filter(Combined, LDLR_homo == FALSE))
     res <- tidy(tmp) %>% 
@@ -297,11 +300,9 @@ for (i in Genotypes) {
 
 # Controlling for prism score.
 
-Outcomes <- "dead90"
-
 MultiReg_prism <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLog) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + prism"))
     tmp <- glm(tmpform, data = Combined, family = "binomial")
     res <- tidy(tmp) %>% 
@@ -319,7 +320,7 @@ for (i in Genotypes) {
 
 MultiReg_NoLDLR_prism <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLog) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + prism"))
     tmp <- glm(tmpform, data = filter(Combined, LDLR_homo == FALSE), family = "binomial")
     res <- tidy(tmp) %>% 
@@ -335,11 +336,9 @@ for (i in Genotypes) {
   }
 }
 
-Outcomes <- c("durmv28", "piculos", "hosplos")
-
 MultiRegLin_prism <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLin) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + prism"))
     tmp <- lm(tmpform, data = Combined)
     res <- tidy(tmp) %>% 
@@ -354,7 +353,7 @@ for (i in Genotypes) {
 
 MultiRegLin_NoLDLR_prism <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLin) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + prism"))
     tmp <- lm(tmpform, data = filter(Combined, LDLR_homo == FALSE))
     res <- tidy(tmp) %>% 
@@ -369,11 +368,9 @@ for (i in Genotypes) {
 
 # Controlling for age.
 
-Outcomes <- "dead90"
-
 MultiReg_age <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLog) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + age"))
     tmp <- glm(tmpform, data = Combined, family = "binomial")
     res <- tidy(tmp) %>% 
@@ -391,7 +388,7 @@ for (i in Genotypes) {
 
 MultiReg_NoLDLR_age <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLog) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + age"))
     tmp <- glm(tmpform, data = filter(Combined, LDLR_homo == FALSE), family = "binomial")
     res <- tidy(tmp) %>% 
@@ -407,11 +404,9 @@ for (i in Genotypes) {
   }
 }
 
-Outcomes <- c("durmv28", "piculos", "hosplos")
-
 MultiRegLin_age <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLin) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + age"))
     tmp <- lm(tmpform, data = Combined)
     res <- tidy(tmp) %>% 
@@ -426,7 +421,7 @@ for (i in Genotypes) {
 
 MultiRegLin_NoLDLR_age <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLin) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + age"))
     tmp <- lm(tmpform, data = filter(Combined, LDLR_homo == FALSE))
     res <- tidy(tmp) %>% 
@@ -441,11 +436,9 @@ for (i in Genotypes) {
 
 # Controlling for gender.
 
-Outcomes <- "dead90"
-
 MultiReg_gender <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLog) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + gender"))
     tmp <- glm(tmpform, data = Combined, family = "binomial")
     res <- tidy(tmp) %>% 
@@ -463,7 +456,7 @@ for (i in Genotypes) {
 
 MultiReg_NoLDLR_gender <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLog) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + gender"))
     tmp <- glm(tmpform, data = filter(Combined, LDLR_homo == FALSE), family = "binomial")
     res <- tidy(tmp) %>% 
@@ -479,11 +472,9 @@ for (i in Genotypes) {
   }
 }
 
-Outcomes <- c("durmv28", "piculos", "hosplos")
-
 MultiRegLin_gender <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLin) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + gender"))
     tmp <- lm(tmpform, data = Combined)
     res <- tidy(tmp) %>% 
@@ -498,7 +489,7 @@ for (i in Genotypes) {
 
 MultiRegLin_NoLDLR_gender <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLin) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + gender"))
     tmp <- lm(tmpform, data = filter(Combined, LDLR_homo == FALSE))
     res <- tidy(tmp) %>% 
@@ -513,11 +504,9 @@ for (i in Genotypes) {
 
 # Controlling for all 3 together!
 
-Outcomes <- "dead90"
-
 MultiReg_all <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLog) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + prism + age + gender"))
     tmp <- glm(tmpform, data = Combined, family = "binomial")
     res <- tidy(tmp) %>% 
@@ -535,7 +524,7 @@ for (i in Genotypes) {
 
 MultiReg_NoLDLR_all <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLog) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + prism + age + gender"))
     tmp <- glm(tmpform, data = filter(Combined, LDLR_homo == FALSE), family = "binomial")
     res <- tidy(tmp) %>% 
@@ -551,11 +540,10 @@ for (i in Genotypes) {
   }
 }
 
-Outcomes <- c("durmv28", "piculos", "hosplos")
 
 MultiRegLin_all <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLin) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + prism + age + gender"))
     tmp <- lm(tmpform, data = Combined)
     res <- tidy(tmp) %>% 
@@ -570,7 +558,7 @@ for (i in Genotypes) {
 
 MultiRegLin_NoLDLR_all <- NULL
 for (i in Genotypes) {
-  for (j in Outcomes) {
+  for (j in OutcomesLin) {
     tmpform <- as.formula(paste0(j, " ~ ", i, " + prism + age + gender"))
     tmp <- lm(tmpform, data = filter(Combined, LDLR_homo == FALSE))
     res <- tidy(tmp) %>% 
@@ -584,5 +572,31 @@ for (i in Genotypes) {
 }
 
 for (i in ls(pattern = "Uni|Multi")) {
-  write_csv(get(i), paste0("./RegressionOutput/", i, ".csv"))
+  get(i) %>% 
+    mutate(fdr.p = p.adjust(p = p.value, method = "fdr")) %>% 
+    relocate(fdr.p, .after = p.value) %>% 
+    arrange(fdr.p) %>% 
+    assign(i, value = ., envir = .GlobalEnv) %>% 
+    write_csv(paste0("./RegressionOutput/", i, ".csv"))
 }
+
+
+Counts <- Combined %>% 
+  group_by(PCSK9_LOF) %>% 
+  summarise(Count = n())
+
+IL8MEd <- Combined %>% 
+  group_by(PCSK9_LOF) %>% 
+  summarise(IL8max = median(IL_8_Max, na.rm = TRUE),
+            ILmed = median(IL_8_Median, na.rm = TRUE))
+
+TMMEd <- Combined %>% 
+  group_by(PCSK9_LOF) %>% 
+  summarise(TMmax = median(thrbm_Max, na.rm = TRUE),
+          TMmed = median(thrbm_Median, na.rm = TRUE))
+
+Combined %>% 
+  filter(!LDLR_homo == TRUE) %>% 
+  ggplot(aes(x = PCSK9_LOF, y = log(thrbm_Max), fill = PCSK9_LOF)) +
+  geom_violin() +
+  geom_point(position = position_jitter(width = 0.2))
