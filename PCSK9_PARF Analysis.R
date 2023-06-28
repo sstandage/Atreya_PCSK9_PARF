@@ -99,10 +99,11 @@ Geno <- read_excel("BALI Genotyping results_Atreya_Dahmer.xlsx") %>%
   slice(1:462) %>% 
   select(where(~ !(all(is.na(.)) | all(. == "")))) %>% 
   mutate(LDLR_homo = if_else(LDLR_rs688 == "TT", TRUE, FALSE),
-         PCSK9_LOF = if_else(PCSK9_rs562556 == "AG" | PCSK9_rs562556 == "GG" | PCSK9_rs11591147 == "GT" | PCSK9_rs11591147 == "TT" | PCSK9_rs11583680 == "CT" | PCSK9_rs11583680 == "TT", TRUE, FALSE),
+         PCSK9_LOF = if_else(PCSK9_rs562556 == "AG" | PCSK9_rs562556 == "GG" | PCSK9_rs11591147 == "GT" | PCSK9_rs11591147 == "TT" | PCSK9_rs11583680 == "CT" | PCSK9_rs11583680 == "TT", "PLOF", "Other"),
          HMGCR_LOF = if_else(HMGCR_rs12916 == "CT" | HMGCR_rs12916 == "CC" | HMGCR_rs17238484 == "GT" | HMGCR_rs17238484 == "TT", TRUE, FALSE)) %>% 
   mutate(across(PCSK9_rs11583680, ~case_match(., "NA" ~ NA_character_, #Removing the one "NA" written in there.
-                                              .default = PCSK9_rs11583680)))
+                                              .default = PCSK9_rs11583680))) %>% 
+  mutate(across(PCSK9_LOF, ~fct(., levels = c("Other", "PLOF"))))
 
 Comorbidities <- colnames(select(PARF, premature:chromabn))
 Severity <- colnames(select(PARF, d1ARDS:ecmo, highestOI, mods))
@@ -116,11 +117,15 @@ Combined <- PARF %>%
   relocate(all_of(Severity), .after = prism) %>% 
   relocate(all_of(Outcomes), .after = mods) %>% 
   mutate(across(contains("_rs"), ~fct(.) %>% fct_infreq())) %>% 
-  mutate(PG = if_else(PCSK9_LOF == FALSE | is.na(PCSK9_LOF), "Other", "LOF"),
-         female = if_else(gender == "Female", TRUE, FALSE)) %>% 
-  mutate(across(PG, ~fct(., levels = c("Other", "LOF")))) %>% 
-  relocate(PG, .after = HMGCR_LOF) %>% 
-  relocate(female, .after = gender)
+  mutate(CompCourse = if_else(mods == TRUE | dead90 == TRUE, TRUE, FALSE),
+         female = if_else(gender == "Female", TRUE, FALSE),
+         race_new = case_when(race == "White" & ethnic == "NonHispanic" ~ "White",
+                               race == "White" & ethnic == "Hispanic" ~ "Hispanic",
+                               .default = race) %>% fct() %>% fct_infreq(),
+         caucasian = if_else(race_new == "White", TRUE, FALSE)) %>% 
+  relocate(CompCourse, .after = mods) %>% 
+  relocate(female, .after = gender) %>% 
+  filter(!is.na(PCSK9_LOF))
   
 
 SNPs <- colnames(select(Combined, contains("_rs")))
@@ -131,15 +136,15 @@ Cytokines <- colnames(select(Combined, matches("IL_|thrbm")))
 ## Building the demographic tables ##
 #####################################
 
-DemoVars1 <- c("female", Comorbidities)
+DemoVars1 <- c("female", "caucasian", Comorbidities)
 DemoTab1 <- Combined %>% 
-  group_by(PG) %>% 
+  group_by(PCSK9_LOF) %>% 
   summarize(across(all_of(DemoVars1), list(
     N = ~ n(),
     Count = ~sum(. == TRUE, na.rm = TRUE)),
     .names = "{col}.{fn}")) %>%
   pivot_longer(cols = 2:ncol(.), names_to = "Vars", values_to = "Vals") %>% 
-  pivot_wider(names_from = PG, values_from = Vals) %>% 
+  pivot_wider(names_from = PCSK9_LOF, values_from = Vals) %>% 
   mutate(across(where(is.numeric), ~round(., 1))) %>% 
   mutate(across("Vars", ~replace(., Vars == "female.N", "N") %>% str_replace("\\.Count", ""))) %>% 
   filter(!str_detect(Vars, "\\.N"))
@@ -160,32 +165,32 @@ for (i in 2:nrow(DemoTab1)) {
 }
 
 DemoProp_f <- DemoProp %>% 
-  mutate(across(c("Other", "LOF"), ~round(.*100, 0))) %>% 
+  mutate(across(c("Other", "PLOF"), ~round(.*100, 0))) %>% 
   mutate(across(p.value, ~round(., 2)))
 
 Partial <- left_join(DemoTab1, DemoProp_f, by = "Vars") %>% 
   mutate(Other = if_else(is.na(p.value), paste0(Other.x, " (", round(Other.x/nrow(Combined)*100, 0), ")"), paste0(Other.x, " (", Other.y, ")")),
-         LOF = if_else(is.na(p.value), paste0(LOF.x, " (", round(LOF.x/nrow(Combined)*100, 0), ")"), paste0(LOF.x, " (", LOF.y, ")"))) %>% 
-  dplyr::select(Vars, Other, LOF, p.value) %>% 
+         PLOF = if_else(is.na(p.value), paste0(PLOF.x, " (", round(PLOF.x/nrow(Combined)*100, 0), ")"), paste0(PLOF.x, " (", PLOF.y, ")"))) %>% 
+  dplyr::select(Vars, Other, PLOF, p.value) %>% 
   mutate(across(Vars, ~if_else(. == "N", paste0("n = ", nrow(Combined), ", n (%)"), paste0(., ", n (%)"))))
 
 DemoVars2 <- c("age", "prism")
 DemoTab2 <- Combined %>% 
-  group_by(PG) %>% 
+  group_by(PCSK9_LOF) %>% 
   summarise(across(all_of(DemoVars2), list(
     Median = ~median(., na.rm = TRUE),
     q25 = ~quantile(., 0.25, na.rm = TRUE),
     q75 = ~quantile(., 0.75, na.rm = TRUE)),
     .names = "{col}.{fn}")) %>% 
   pivot_longer(cols = 2:ncol(.), names_to = "Vars", values_to = "Vals") %>% 
-  pivot_wider(names_from = PG, values_from = Vals) %>% 
+  pivot_wider(names_from = PCSK9_LOF, values_from = Vals) %>% 
   mutate(across(where(is.numeric), ~round(., 1))) %>% 
   separate(col = Vars, sep = "\\.", into = c("Vars", "Term"))
 
 SumStats <- NULL
 for (i in DemoVars2) {
   tmp <- Combined %>% 
-    group_by(PG) %>% 
+    group_by(PCSK9_LOF) %>% 
     summarise(Mean = mean(get(i), na.rm = TRUE),
               SD = sd(get(i), na.rm = TRUE),
               Median = median(get(i), na.rm = TRUE),
@@ -194,7 +199,7 @@ for (i in DemoVars2) {
               Count = sum(!is.na(get(i))),
               SWilk = shapiro.test(get(i))$p.value)
   
-  mod <- wilcox.test(get(i) ~ PG, data = Combined) %>% 
+  mod <- wilcox.test(get(i) ~ PCSK9_LOF, data = Combined) %>% 
     tidy()
   
   SumStats <- tibble(Vars = rep(i, 2),
@@ -206,15 +211,15 @@ for (i in DemoVars2) {
 SumStats_f <- SumStats %>% 
   mutate(across(c("Median", "q25", "q75"), ~if_else(Vars %in% c("age", "highestOI", "durmv28", "piculos"), round(., 1), .))) %>% 
   mutate(Final = paste0(Median, " (", q25, ", ", q75, ")")) %>% 
-  pivot_wider(id_cols = c("Vars", "p.value"), names_from = "PG", values_from = "Final") %>% 
-  relocate(p.value, .after = LOF) %>% 
+  pivot_wider(id_cols = c("Vars", "p.value"), names_from = "PCSK9_LOF", values_from = "Final") %>% 
+  relocate(p.value, .after = PLOF) %>% 
   unnest(cols = p.value) %>% 
   mutate(across(Vars, ~paste0(., ", median (IQR)")))
 
 
 Full <- bind_rows(Partial, SumStats_f)
 
-write_csv(Full, "DemographicTable.csv")
+write_csv(Full, "DemographicTable.csv", na = "")
 
 rm(tmp, mod, Props, Partial, SumStats, SumStats_f, list = ls(pattern = "Demo"))
 
@@ -223,8 +228,8 @@ rm(tmp, mod, Props, Partial, SumStats, SumStats_f, list = ls(pattern = "Demo"))
 ## Exploratory Outcome Analysis ##
 ##################################
 
-Genotypes <- colnames(select(Combined, LDLR_rs688:PG))
-OutcomesLog <- c(Severity, Outcomes) %>% 
+Genotypes <- colnames(select(Combined, LDLR_rs688:HMGCR_LOF))
+OutcomesLog <- c(Severity, Outcomes, "CompCourse") %>% 
   .[! . %in% c("highestOI", "durmv28", "piculos", "hosplos")]
 
 OutcomesLin <- c(Severity, Outcomes) %>% 
@@ -600,3 +605,167 @@ Combined %>%
   ggplot(aes(x = PCSK9_LOF, y = log(thrbm_Max), fill = PCSK9_LOF)) +
   geom_violin() +
   geom_point(position = position_jitter(width = 0.2))
+
+
+## Computing race
+
+RaceTab <- table(Combined$race_new, Combined$PCSK9_LOF) %>% 
+  addmargins() %>% 
+  as.data.frame.matrix() %>% 
+  rownames_to_column(var = "Race") %>% 
+  as_tibble()
+
+RaceTab_prop <- table(Combined$race_new, Combined$PCSK9_LOF) %>% 
+  prop.table(margin = 1) %>% #change margin to determine proportions across rows or columsn
+  as.data.frame.matrix() %>% 
+  round(2) %>% 
+  rownames_to_column(var = "Race") %>% 
+  as_tibble()
+
+ToR_Geno <- fisher.test(x = Combined$PCSK9_LOF, y = Combined$race_new, simulate.p.value = TRUE)
+ToR_Geno_chi <- chisq.test(x = Combined$PCSK9_LOF, y = Combined$race_new)
+
+RaceLOF <- glm(PCSK9_LOF ~ race_new, data = Combined, family = "binomial")
+OR_Race_LOF <- tidy(RaceLOF) %>% 
+  mutate(OR = exp(estimate)) %>% 
+  mutate(across(where(is.numeric), ~round(., 4))) %>% 
+  rename(Race = term) %>% 
+  mutate(across(Race, ~case_match(., "(Intercept)" ~ "White",
+                                  .default = .) %>% 
+                  str_replace("race_new", "")))
+
+Racer <- RaceTab %>% 
+  left_join(RaceTab_prop, by = "Race") %>% 
+  mutate(Other = if_else(Race == "Sum", as.character(Other.x), paste0(Other.x, " (", Other.y * 100, ")")),
+         PLOF = if_else(Race == "Sum", as.character(PLOF.x), paste0(PLOF.x, " (", PLOF.y * 100, ")"))) %>% 
+  left_join(OR_Race_LOF, by = "Race") %>% 
+  select(Race, Other, PLOF, Sum, OR, p.value) %>% 
+  mutate(across(Race, ~if_else(Race == "Sum", ., paste0(., " (%)")))) %>% 
+  bind_rows(tibble(Race = "Fisher.exact test",
+                   Other = "",
+                   PLOF = "",
+                   Sum = NA,
+                   OR = NA,
+                   p.value = ToR_Geno$p.value))
+
+write_csv(Racer, "RaceAnalysis.csv")
+
+
+## Focused analysis
+OutcomesLogNew <- c("ARDS", "durmv28", "CompCourse", "dead90")
+Predictors <- c("age", "female", "caucasian", "prism", "PCSK9_LOF")
+
+UnivariateAnalysis <- NULL
+for (i in OutcomesLogNew) {
+  for (j in Predictors) {
+    if (i == "durmv28"){
+      tmpform <- as.formula((paste0("durmv28 ~ ", j)))
+      tmp <- lm(tmpform, data = Combined)
+      res <- tidy(tmp) %>% 
+        mutate(across(2:5, ~round(., 3))) %>% 
+        select(term, p.value)
+      UnivariateAnalysis <- tibble(Outcome = i,
+                                   Predictor = j,
+                                   nObs = nobs(tmp),
+                                   res[2,]) %>% 
+        bind_rows(UnivariateAnalysis, .)
+    } else {
+      tmpform <- as.formula(paste0(i, " ~ ", j))
+      tmp <- glm(tmpform, data = Combined, family = "binomial")
+      res <- tidy(tmp) %>% 
+        mutate(across(2:5, ~round(., 3))) %>% 
+        select(term, p.value)
+      UnivariateAnalysis <- tibble(Outcome = i,
+                                   Predictor = j,
+                                   nObs = nobs(tmp),
+                                   res[2,]) %>% 
+        bind_rows(UnivariateAnalysis, .)
+    }
+  }
+}
+
+write_csv(UnivariateAnalysis, "UnivariateAnalysis.csv")
+
+
+MultivariateAnalysis_r <- NULL
+for (i in 1:2) {
+  if(i ==1){
+    tmpdat <- Combined
+  } else {
+    tmpdat <- Combined %>% filter(!LDLR_homo == TRUE)
+  }
+  
+  for (j in OutcomesLogNew) {
+    tmpform <- as.formula(paste0(j, " ~ PCSK9_LOF + age + female + caucasian + prism"))
+    
+    if (j == "durmv28"){
+      tmp <- lm(tmpform, data = tmpdat)
+      res <- tidy(tmp) %>% 
+        mutate(across(2:5, ~round(., 3))) %>% 
+        select(-c(3:4))
+      MultivariateAnalysis_r <- tibble(Outcome = j,
+                                   LDLR_homo = if_else(i == 1, "", "Removed"),
+                                   nObs = nobs(tmp),
+                                   res) %>% 
+        bind_rows(MultivariateAnalysis_r, .)
+    } else {
+      tmp <- glm(tmpform, data = tmpdat, family = "binomial")
+      res <- tidy(tmp) %>% 
+        mutate(across(2:5, ~round(., 3))) %>% 
+        select(-c(3:4))
+      MultivariateAnalysis_r <- tibble(Outcome = j,
+                                      LDLR_homo = if_else(i == 1, "", "Removed"),
+                                      nObs = nobs(tmp),
+                                      res) %>% 
+        bind_rows(MultivariateAnalysis_r, .)
+    }
+  }
+}
+
+MultivariateAnalysis <- MultivariateAnalysis_r %>% 
+  arrange(Outcome, term, LDLR_homo) %>% 
+  filter(!term == "(Intercept)")
+
+write_csv(MultivariateAnalysis, "MultivariateAnalysis.csv")
+
+
+FocusedMultivariateAnalysis_r <- NULL
+for (i in 1:2) {
+  if(i ==1){
+    tmpdat <- Combined
+  } else {
+    tmpdat <- Combined %>% filter(!LDLR_homo == TRUE)
+  }
+  
+  for (j in OutcomesLogNew) {
+    tmpform <- as.formula(paste0(j, " ~ PCSK9_LOF + age + prism"))
+    
+    if (j == "durmv28"){
+      tmp <- lm(tmpform, data = tmpdat)
+      res <- tidy(tmp) %>% 
+        mutate(across(2:5, ~round(., 3))) %>% 
+        select(-c(3:4))
+      FocusedMultivariateAnalysis_r <- tibble(Outcome = j,
+                                       LDLR_homo = if_else(i == 1, "", "Removed"),
+                                       nObs = nobs(tmp),
+                                       res) %>% 
+        bind_rows(FocusedMultivariateAnalysis_r, .)
+    } else {
+      tmp <- glm(tmpform, data = tmpdat, family = "binomial")
+      res <- tidy(tmp) %>% 
+        mutate(across(2:5, ~round(., 3))) %>% 
+        select(-c(3:4))
+      FocusedMultivariateAnalysis_r <- tibble(Outcome = j,
+                                       LDLR_homo = if_else(i == 1, "", "Removed"),
+                                       nObs = nobs(tmp),
+                                       res) %>% 
+        bind_rows(FocusedMultivariateAnalysis_r, .)
+    }
+  }
+}
+
+FocusedMultivariateAnalysis <- FocusedMultivariateAnalysis_r %>% 
+  arrange(Outcome, term, LDLR_homo) %>% 
+  filter(!term == "(Intercept)")
+
+write_csv(FocusedMultivariateAnalysis, "FocusedMultivariateAnalysis.csv")
